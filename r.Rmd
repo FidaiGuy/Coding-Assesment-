@@ -1,0 +1,178 @@
+---
+title: "Code for Coding Assesment"
+output: html_document
+author: "Samir Fidai"
+---
+
+
+Loading the Tidyverse package
+
+```{r, output = FALSE}
+library(tidyverse)
+
+```
+
+
+
+Uploading the csv into R and converting the dates using lubridate. 
+
+```{r}
+research <- read.csv(here::here("F-F_Research_Data_Factors_daily.CSV"), skip = 4)
+research <- research %>% mutate(X = as.numeric(X),
+                                X = lubridate::ymd(X)) %>%
+  filter(!is.na(Mkt.RF))
+
+
+research %>% head()
+```
+
+Calculating the Summary Statistics
+
+```{r, output = TRUE}
+summary_statistics <- research %>%
+  select(-X) %>%
+  psych::describe() 
+summary_statistics
+```
+
+Creating the Density plots for the Market and Risk-Free assets 
+
+```{r}
+Mkt.RF_Density <- research %>% ggplot(aes(x=Mkt.RF)) +
+  geom_histogram(aes(y=..density..), bins = 100) +
+  geom_density(aes(Mkt.RF), color = "Red")
+
+RF_Density <- research %>% ggplot(aes(x=RF)) +
+  geom_histogram(aes(y=..density..), bins = 30) +
+  geom_density(aes(RF), color = "Red")
+
+gridExtra::grid.arrange(Mkt.RF_Density, RF_Density)
+```
+
+Code for generating the growth of One Dollar invested from the beginning. 
+
+```{r}
+research %>% mutate(summed = 1 + cumsum(Mkt.RF)) %>%
+  ggplot(aes(X, summed)) +
+  geom_line() +
+  ylab("Closing") +
+  xlab("Year") +
+  ggtitle("Growth of a Dollar")
+
+```
+
+Grouped by year and generated plot.
+
+```{r}
+research.ByYear <- research %>%
+  group_by(year = lubridate::floor_date(X, unit = "years")) %>%
+  summarise(`Sum Mkt.RF` = sum(Mkt.RF))
+
+
+research.ByYear %>% ggplot(aes(year, (1 + cumsum(`Sum Mkt.RF`)))) +
+  geom_line()
+```
+
+
+Created and populated the matrix of Bootstraped values.
+
+```{r}
+set.seed(1738)
+n = 25
+B = 10000
+
+bootstrap_Matrix <- matrix(
+  sample(research.ByYear$`Sum Mkt.RF`, size = B*n, replace = TRUE),
+  ncol = B, nrow = n)
+
+One_Matrix <- matrix(1, ncol = B, nrow = 1)
+
+bootstrap_Matrix <- rbind(One_Matrix, bootstrap_Matrix)
+
+dim(bootstrap_Matrix)
+
+
+
+```
+
+Matrix is converted to a dataframe using the melt() function. Using the new Dataframe, the initial graph of the 10,000 Bootstraps was generated.
+
+```{r}
+melted_Bootstrap <- bootstrap_Matrix %>% reshape2::melt() %>%
+  group_by(Var2) %>%
+  mutate(`value Sum` = cumsum(value)) 
+
+Bootstrap_chart <- melted_Bootstrap %>%
+  ggplot() +
+  geom_line(aes(x = Var1 , y = `value Sum`, group = Var2)) + 
+  theme_minimal() 
+
+Bootstrap_chart
+```
+
+The 5th and 95th percentiles are located using quantile()
+
+```{r}
+melted_Bootstrap_pivot_wider <- melted_Bootstrap %>% 
+  select(-value) %>%
+  pivot_wider(names_from = Var1, values_from = `value Sum`) %>%
+  as_tibble()
+
+psych::describe(melted_Bootstrap_pivot_wider$`26`)
+
+quantile(melted_Bootstrap_pivot_wider$`26`, 0.95)
+quantile(melted_Bootstrap_pivot_wider$`26`, 0.05)
+quantile(melted_Bootstrap_pivot_wider$`26`, 0.5)
+
+melted_Bootstrap_pivot_wider %>% filter(`26` == 42.96 | `26` == 355.36)
+
+
+```
+
+The 5th and 95th percentiles are highlited in the initial graph.
+
+```{r}
+Bootstrap_plot_percentiles <- melted_Bootstrap %>% 
+  filter(Var2 == 6173 | Var2 == 9811) 
+  
+
+Bootstrap_chart <- Bootstrap_chart + geom_line(data = Bootstrap_plot_percentiles, aes(x = Var1 , y = `value Sum`, group = Var2, color = "Dark Red")) +
+  theme_gray() +
+  ylab("Close") +
+  xlab("Year") +
+  ggtitle("Bootstrap simulations of Growth of $1") +
+  theme(legend.position = "NONE") 
+
+Bootstrap_chart
+```
+
+
+CAGR calculations
+
+```{r}
+CAGR <- melted_Bootstrap %>%
+  filter(Var1 == 26) %>%
+  mutate(CAGR = (`value Sum`/1)^(1/25)-1)
+
+CAGR %>% ggplot() +
+  geom_histogram(aes(CAGR), bins = 150)
+
+
+```
+
+
+Comparing the original strategy of 100% investment in the market and a 50-50 split in the market and in risk-free assets using a generated ggplot of #2
+
+```{r}
+research %>% 
+  mutate(`summed Mkt.RF` = .50 + cumsum(Mkt.RF),
+         `summed RF` = .50 + cumsum(RF),
+          total = `summed Mkt.RF` + `summed RF`) %>%
+  ggplot(aes(X, total)) +
+  geom_line(aes(X, total), color = "firebrick1") +
+  geom_line(aes(X, y = (1 + cumsum(Mkt.RF))), color = "darkolivegreen4") +
+  ylab("Closing") +
+  xlab("Year") +
+  ggtitle("Growth of a Dollar")
+```
+
